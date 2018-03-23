@@ -1,0 +1,152 @@
+buildscript {
+	repositories {
+		mavenLocal()
+
+		maven {
+			url 'https://pfiks.jfrog.io/pfiks/global'
+			credentials {
+				username = "${artifactory_user}"
+				password = "${artifactory_password}"
+			}
+		}
+
+	}
+
+	dependencies {
+		classpath group: "com.liferay", name: "com.liferay.gradle.plugins", version: "2.0.5"
+		classpath group: "org.jfrog.buildinfo", name: "build-info-extractor-gradle", version: "4.4.1"
+		classpath group: "org.sonarsource.scanner.gradle", name: "sonarqube-gradle-plugin", version: "2.6.1"
+	}
+}
+
+allprojects {
+	apply plugin: "com.jfrog.artifactory"
+}
+
+artifactoryPublish.skip = true // The artifactoryPublish is not required for the root project (fruit)
+
+subprojects {
+
+	apply plugin: 'com.liferay.plugin'
+	apply plugin: 'java'
+	apply plugin: 'maven'
+	apply plugin: 'maven-publish'
+	apply plugin: "org.sonarqube"
+	apply plugin: 'jacoco'
+	apply plugin: 'findbugs'
+
+	repositories {
+		mavenLocal();
+
+		maven {
+			url 'https://pfiks.jfrog.io/pfiks/global'
+			credentials {
+				username = "${artifactory_user}"
+				password = "${artifactory_password}"
+		   	}
+		}
+	}
+
+	dependencies {
+		compile group: "org.osgi", name: "org.osgi.compendium", version: "5.0.0"
+	}
+
+	sourceCompatibility = 1.8
+	checkSourceFormatting.enabled = false // Disable Liferay's source formatting check task
+
+
+	// Task to set group and version for each module
+
+	task setBuildProperties() {
+		def Properties properties = new Properties();
+		def File bndFile = file("bnd.bnd")
+
+		inputs.files bndFile
+
+		doLast {
+
+			if (!bndFile.exists()) {
+				throw new GradleException("Unable to find bnd.bnd at " + bndFile().getAbsolutePath())
+			}
+
+			bndFile.withInputStream { stream ->
+				properties.load(stream)
+			}
+
+			project.version(properties.getProperty("Bundle-Version"))
+			project.group(gradle.groupId)
+
+			logger.info "Project group: $project.group, version: $project.version"
+		}
+	}
+
+
+	// Ensure that the setBuildProperties task is run first
+
+	tasks.artifactoryPublish.dependsOn(setBuildProperties)
+	tasks.compileJava.dependsOn(setBuildProperties)
+
+	// Create a build artefact without the version number
+
+	jar {
+		archiveName = project.name + ".jar"
+	}
+
+	task javadocJar(type: Jar) {
+	    classifier = 'javadoc'
+	    from javadoc
+	}
+
+	task sourcesJar(type: Jar) {
+	    from sourceSets.main.allSource
+	    classifier = 'sources'
+	}
+
+
+	// Set up Artifactory publication - use artifactoryPublish to push build artefacts to Artifactory
+
+	publishing {
+		publications {
+			pfiksArtifactory(MavenPublication) {
+				// telling gradle to publish project's jar archive
+				from components.java
+				artifact sourcesJar
+				artifact javadocJar
+				groupId gradle.groupId
+			}
+		}
+	}
+
+	artifactory {
+		contextUrl = "${artifactory_contextUrl}"   //The base Artifactory URL if not overridden by the publisher/resolver
+		publish {
+			repository {
+				repoKey = 'libs-release-local'
+				username = "${artifactory_user}"
+				password = "${artifactory_password}"
+				maven = true
+
+			}
+			defaults {
+				// Reference to Gradle publications defined in the build script.
+				// This is how we tell the Artifactory Plugin which artifacts should be
+				// published to Artifactory.
+				publications('pfiksArtifactory') // Tell the artifactory publication to use the pfiks publication
+				publishArtifacts = true
+				publishPom = true // Publish generated POM files to Artifactory (true by default)
+			}
+		}
+	}
+
+	findbugs {
+	    ignoreFailures = true
+	}
+	
+	
+	// Configure Liferay deploy directory
+	
+	liferay {
+		appServerParentDir = project.hasProperty('liferay_appServerParentDir') ? "${ liferay_appServerParentDir }" : project.rootDir 
+	}
+
+}

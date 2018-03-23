@@ -1,0 +1,7 @@
+def modules = [
+	'top-head-include-jsp'
+] as String[]
+
+include modules
+
+gradle.ext.groupId = "com.icon.overrides"
